@@ -1,0 +1,6 @@
+{
+  "name": "FY3 v1.0.1 - المطور يونيو فليد (yonio fleed)",
+  "description": "محرك ألعاب FY3 v1.0.1 - تطوير يونيو فليد (yonio fleed) مع عالم لانهائي، كاميرا تتبع ذكية، تحكم بالفأرة، وسلوكيات جاهزة بالأبيض والأسود.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
