@@ -1,0 +1,21 @@
+{
+  "name": "FY3 Game Engine",
+  "short_name": "FY3",
+  "description": "محرك ألعاب FY3 v1.0.1 - تطوير يونيو فليد (yonio fleed)",
+  "id": "com.yoniofleed.fy3",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "categories": ["games", "utilities", "developer tools"],
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
