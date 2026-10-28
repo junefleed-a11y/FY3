@@ -6,6 +6,8 @@
     background-color: #000000;
     color: #ffffff;
     user-select: none;
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
   }
 
   code, pre, .font-mono {
