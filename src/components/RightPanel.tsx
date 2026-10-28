@@ -22,7 +22,8 @@ import {
   ChevronUp,
   ChevronDown,
   Monitor,
-  Globe
+  Globe,
+  X
 } from 'lucide-react';
 
 interface RightPanelProps {
@@ -43,6 +44,8 @@ interface RightPanelProps {
   onDeleteLayer?: (layerId: string) => void;
   onReorderLayers?: (sourceIndex: number, targetIndex: number) => void;
   onUpdateSettings?: (updater: (prev: GameSettings) => GameSettings) => void;
+  isMobileOpen?: boolean;
+  onCloseMobile?: () => void;
   language: Language;
   theme: ThemeMode;
 }

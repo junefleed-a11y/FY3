@@ -88,6 +88,11 @@ export const FY3NodeEditor: React.FC<FY3NodeEditorProps> = ({
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
+  // Mobile Palette Drawer State & Touch Tracking
+  const [isMobilePaletteOpen, setIsMobilePaletteOpen] = useState(false);
+  const touchStartDistRef = useRef<number | null>(null);
+  const touchStartZoomRef = useRef<number>(1);
+
   // Dragging Node State
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -192,6 +197,7 @@ export const FY3NodeEditor: React.FC<FY3NodeEditorProps> = ({
     };
 
     triggerUpdate(updatedGraph);
+    setIsMobilePaletteOpen(false);
   };
 
   // Delete node
@@ -227,7 +233,7 @@ export const FY3NodeEditor: React.FC<FY3NodeEditorProps> = ({
     triggerUpdate({ ...graph, nodes: updatedNodes });
   };
 
-  // Handle Dragging Nodes on Canvas
+  // Handle Dragging Nodes on Canvas (Mouse)
   const handleNodeMouseDown = (node: ScriptNode, e: React.MouseEvent) => {
     if (e.button !== 0) return; // only left click
     e.stopPropagation();
@@ -235,6 +241,19 @@ export const FY3NodeEditor: React.FC<FY3NodeEditorProps> = ({
     setDragOffset({
       x: e.clientX / zoom - node.x,
       y: e.clientY / zoom - node.y
+    });
+  };
+
+  // Handle Dragging Nodes on Canvas (Touch)
+  const handleNodeTouchStart = (nodeId: string, e: React.TouchEvent) => {
+    e.stopPropagation();
+    const touch = e.touches[0];
+    const node = graph.nodes.find(n => n.id === nodeId);
+    if (!node) return;
+    setDraggingNodeId(nodeId);
+    setDragOffset({
+      x: touch.clientX / zoom - node.x,
+      y: touch.clientY / zoom - node.y
     });
   };
 
@@ -295,7 +314,7 @@ export const FY3NodeEditor: React.FC<FY3NodeEditorProps> = ({
     }
   };
 
-  const handleCanvasMouseUp = (e: React.MouseEvent) => {
+  const handleCanvasMouseUp = () => {
     if (draggingNodeId) {
       setDraggingNodeId(null);
       triggerUpdate(graph);
@@ -303,20 +322,108 @@ export const FY3NodeEditor: React.FC<FY3NodeEditorProps> = ({
     setIsPanning(false);
   };
 
+  // Touch Handlers for Mobile (1-finger pan/node drag, 2-finger pinch-to-zoom)
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      if (connectingFrom) {
+        setConnectingFrom(null);
+        setWireMousePos(null);
+      }
+      setIsPanning(true);
+      setPanStart({ x: touch.clientX - pan.x, y: touch.clientY - pan.y });
+    } else if (e.touches.length === 2) {
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      const midX = (t1.clientX + t2.clientX) / 2;
+      const midY = (t1.clientY + t2.clientY) / 2;
+      touchStartDistRef.current = dist;
+      touchStartZoomRef.current = zoom;
+      setIsPanning(true);
+      setPanStart({ x: midX - pan.x, y: midY - pan.y });
+    }
+  };
 
-  // Socket Connection Handlers (Support both Click & Drag-Drop)
-  const handleStartConnect = (nodeId: string, socketId: string, e: React.MouseEvent) => {
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      // 1. Move dragging node
+      if (draggingNodeId) {
+        const newX = Math.round(touch.clientX / zoom - dragOffset.x);
+        const newY = Math.round(touch.clientY / zoom - dragOffset.y);
+        setGraph(prev => ({
+          ...prev,
+          nodes: prev.nodes.map(n => n.id === draggingNodeId ? { ...n, x: newX, y: newY } : n)
+        }));
+        return;
+      }
+
+      // 2. Pan canvas
+      if (isPanning) {
+        setPan({
+          x: touch.clientX - panStart.x,
+          y: touch.clientY - panStart.y
+        });
+        return;
+      }
+
+      // 3. Track wire drag
+      if (connectingFrom && containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        const worldX = (touch.clientX - rect.left - pan.x) / zoom;
+        const worldY = (touch.clientY - rect.top - pan.y) / zoom;
+        setWireMousePos({ x: worldX, y: worldY });
+      }
+    } else if (e.touches.length === 2) {
+      // 2-Finger Pinch Zoom & Pan
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      if (touchStartDistRef.current && touchStartDistRef.current > 0) {
+        const scale = dist / touchStartDistRef.current;
+        const newZoom = Math.min(3.0, Math.max(0.2, parseFloat((touchStartZoomRef.current * scale).toFixed(3))));
+        setZoom(newZoom);
+        const midX = (t1.clientX + t2.clientX) / 2;
+        const midY = (t1.clientY + t2.clientY) / 2;
+        setPan({
+          x: midX - panStart.x,
+          y: midY - panStart.y
+        });
+      }
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 0) {
+      if (draggingNodeId) {
+        setDraggingNodeId(null);
+        triggerUpdate(graph);
+      }
+      setIsPanning(false);
+      touchStartDistRef.current = null;
+    } else if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      touchStartDistRef.current = null;
+      setPanStart({ x: touch.clientX - pan.x, y: touch.clientY - pan.y });
+    }
+  };
+
+  // Socket Connection Handlers (Support both Click/Tap & Drag-Drop)
+  const handleStartConnect = (nodeId: string, socketId: string, e: React.MouseEvent | React.TouchEvent) => {
     e.stopPropagation();
     setConnectingFrom({ nodeId, socketId });
     if (containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect();
-      const worldX = (e.clientX - rect.left - pan.x) / zoom;
-      const worldY = (e.clientY - rect.top - pan.y) / zoom;
+      const clientX = 'touches' in e && e.touches.length > 0 ? e.touches[0].clientX : (e as React.MouseEvent).clientX || rect.left + rect.width / 2;
+      const clientY = 'touches' in e && e.touches.length > 0 ? e.touches[0].clientY : (e as React.MouseEvent).clientY || rect.top + rect.height / 2;
+      const worldX = (clientX - rect.left - pan.x) / zoom;
+      const worldY = (clientY - rect.top - pan.y) / zoom;
       setWireMousePos({ x: worldX, y: worldY });
     }
   };
 
-  const handleEndConnect = (toNodeId: string, toSocketId: string, e: React.MouseEvent) => {
+  const handleEndConnect = (toNodeId: string, toSocketId: string, e: React.MouseEvent | React.TouchEvent) => {
     e.stopPropagation();
     if (!connectingFrom) return;
     if (connectingFrom.nodeId === toNodeId) {
@@ -369,8 +476,12 @@ export const FY3NodeEditor: React.FC<FY3NodeEditorProps> = ({
         onMouseDown={handleCanvasMouseDown}
         onMouseMove={handleCanvasMouseMove}
         onMouseUp={handleCanvasMouseUp}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
         onContextMenu={(e) => e.preventDefault()}
-        className="flex-1 relative overflow-hidden cursor-default bg-white text-black"
+        className="flex-1 relative overflow-hidden cursor-default bg-white text-black touch-none"
         style={{
           backgroundImage: `radial-gradient(circle, rgba(0, 0, 0, 0.15) 1.2px, transparent 1.2px)`,
           backgroundSize: '24px 24px',
@@ -476,7 +587,8 @@ export const FY3NodeEditor: React.FC<FY3NodeEditorProps> = ({
                 {/* Node Header (Draggable) - Pure Black & White Style */}
                 <div 
                   onMouseDown={(e) => handleNodeMouseDown(node, e)}
-                  className="px-3 py-2 bg-black text-white flex items-center justify-between cursor-grab active:cursor-grabbing border-b-2 border-black"
+                  onTouchStart={(e) => handleNodeTouchStart(node.id, e)}
+                  className="px-3 py-2 bg-black text-white flex items-center justify-between cursor-grab active:cursor-grabbing border-b-2 border-black touch-none"
                 >
                   <div className="flex flex-col overflow-hidden">
                     <span className="font-black text-xs text-white truncate">{node.title}</span>
@@ -503,6 +615,7 @@ export const FY3NodeEditor: React.FC<FY3NodeEditorProps> = ({
                         key={socket.id}
                         onClick={(e) => handleEndConnect(node.id, socket.id, e)}
                         onMouseUp={(e) => handleEndConnect(node.id, socket.id, e)}
+                        onTouchEnd={(e) => handleEndConnect(node.id, socket.id, e)}
                         className="flex items-center gap-1.5 cursor-pointer group"
                       >
                         <div 
@@ -521,6 +634,7 @@ export const FY3NodeEditor: React.FC<FY3NodeEditorProps> = ({
                         key={socket.id}
                         onMouseDown={(e) => handleStartConnect(node.id, socket.id, e)}
                         onClick={(e) => handleStartConnect(node.id, socket.id, e)}
+                        onTouchStart={(e) => handleStartConnect(node.id, socket.id, e)}
                         className="flex items-center gap-1.5 cursor-pointer group"
                       >
                         <span className="text-[11px] font-bold text-neutral-900">{socket.name}</span>
@@ -650,10 +764,47 @@ export const FY3NodeEditor: React.FC<FY3NodeEditorProps> = ({
             );
           })}
         </div>
+
+        {/* Floating Canvas Controls: Zoom, Reset, and Mobile Add Block Button */}
+        <div className="absolute bottom-3 left-3 z-30 flex items-center gap-1 border border-neutral-300 bg-white/95 text-black p-1 rounded shadow-lg font-mono text-xs select-none">
+          <button
+            onClick={() => setZoom(z => Math.min(3, parseFloat((z + 0.2).toFixed(2))))}
+            title="تقريب (Zoom In)"
+            className="p-1 hover:bg-neutral-200 rounded cursor-pointer"
+          >
+            <ZoomIn className="w-4 h-4 text-black" />
+          </button>
+          <span className="text-[10px] font-mono px-1 opacity-80 min-w-[34px] text-center font-bold text-black">
+            {Math.round(zoom * 100)}%
+          </span>
+          <button
+            onClick={() => setZoom(z => Math.max(0.2, parseFloat((z - 0.2).toFixed(2))))}
+            title="تبعيد (Zoom Out)"
+            className="p-1 hover:bg-neutral-200 rounded cursor-pointer"
+          >
+            <ZoomOut className="w-4 h-4 text-black" />
+          </button>
+          <button
+            onClick={() => { setZoom(1); setPan({ x: 40, y: 40 }); }}
+            title="إعادة ضبط العرض"
+            className="p-1 hover:bg-neutral-200 rounded cursor-pointer"
+          >
+            <RotateCcw className="w-4 h-4 text-black" />
+          </button>
+
+          {/* Mobile-only Quick Add Button */}
+          <button
+            onClick={() => setIsMobilePaletteOpen(true)}
+            className="md:hidden flex items-center gap-1 px-2.5 py-1 bg-black text-white text-[11px] font-bold rounded hover:bg-neutral-800 cursor-pointer mr-1"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>+ إضافة مكعب</span>
+          </button>
+        </div>
       </div>
 
-      {/* Right Side Palette: All FY3 Blocks in Pure Black & White Theme */}
-      <div className="w-72 border-r border-neutral-800 bg-black flex flex-col shrink-0 text-white">
+      {/* Desktop Right Side Palette: Pure Black & White Theme (Unchanged on Desktop) */}
+      <div className="hidden md:flex md:w-72 border-r border-neutral-800 bg-black flex-col shrink-0 text-white">
         <div className="p-3 border-b border-neutral-800 bg-neutral-950 flex items-center justify-between">
           <div className="flex items-center gap-1.5">
             <Sliders className="w-4 h-4 text-white" />
@@ -743,6 +894,113 @@ export const FY3NodeEditor: React.FC<FY3NodeEditorProps> = ({
           ))}
         </div>
       </div>
+
+      {/* Mobile Palette Drawer Modal (Visible only on mobile when user taps "+ إضافة مكعب") */}
+      {isMobilePaletteOpen && (
+        <div className="fixed inset-0 z-50 md:hidden flex flex-col justify-end">
+          <div 
+            className="fixed inset-0 bg-black/75 backdrop-blur-xs"
+            onClick={() => setIsMobilePaletteOpen(false)}
+          />
+          <div className="relative z-10 w-full max-h-[82vh] bg-black border-t-2 border-neutral-700 flex flex-col text-white rounded-t-2xl overflow-hidden shadow-2xl">
+            {/* Mobile Header with Close button */}
+            <div className="p-3 border-b border-neutral-800 bg-neutral-950 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-white" />
+                <span className="font-bold text-sm text-white">اختر مكعب FY3 لإضافته</span>
+                <span className="text-[10px] text-white font-bold px-1.5 py-0.5 bg-neutral-900 rounded border border-neutral-700">
+                  {filteredTemplates.length}
+                </span>
+              </div>
+              <button
+                onClick={() => setIsMobilePaletteOpen(false)}
+                className="p-1.5 rounded-full hover:bg-neutral-800 text-neutral-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Search Input */}
+            <div className="p-2 border-b border-neutral-800 bg-black shrink-0">
+              <div className="flex items-center gap-1.5 px-2.5 py-2 bg-neutral-900 border border-neutral-700 rounded text-xs">
+                <Search className="w-4 h-4 text-neutral-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="ابحث عن مكعب..."
+                  className="bg-transparent border-none outline-none text-xs w-full text-white placeholder-neutral-400"
+                />
+              </div>
+            </div>
+
+            {/* Category Filters */}
+            <div className="p-2 border-b border-neutral-800 flex gap-1.5 flex-wrap bg-neutral-950 shrink-0">
+              <button
+                onClick={() => setSelectedCategory('all')}
+                className={`px-2.5 py-1 text-xs rounded font-bold cursor-pointer transition-colors ${
+                  selectedCategory === 'all' ? 'bg-white text-black' : 'bg-neutral-900 text-neutral-300 hover:text-white border border-neutral-800'
+                }`}
+              >
+                الكل
+              </button>
+              <button
+                onClick={() => setSelectedCategory('movement')}
+                className={`px-2.5 py-1 text-xs rounded font-bold cursor-pointer transition-colors ${
+                  selectedCategory === 'movement' ? 'bg-white text-black' : 'bg-neutral-900 text-neutral-300 hover:text-white border border-neutral-800'
+                }`}
+              >
+                الحركة
+              </button>
+              <button
+                onClick={() => setSelectedCategory('input')}
+                className={`px-2.5 py-1 text-xs rounded font-bold cursor-pointer transition-colors ${
+                  selectedCategory === 'input' ? 'bg-white text-black' : 'bg-neutral-900 text-neutral-300 hover:text-white border border-neutral-800'
+                }`}
+              >
+                الأزرار
+              </button>
+              <button
+                onClick={() => setSelectedCategory('camera')}
+                className={`px-2.5 py-1 text-xs rounded font-bold cursor-pointer transition-colors ${
+                  selectedCategory === 'camera' ? 'bg-white text-black' : 'bg-neutral-900 text-neutral-300 hover:text-white border border-neutral-800'
+                }`}
+              >
+                الكاميرا
+              </button>
+              <button
+                onClick={() => setSelectedCategory('gameplay')}
+                className={`px-2.5 py-1 text-xs rounded font-bold cursor-pointer transition-colors ${
+                  selectedCategory === 'gameplay' ? 'bg-white text-black' : 'bg-neutral-900 text-neutral-300 hover:text-white border border-neutral-800'
+                }`}
+              >
+                الفيزياء
+              </button>
+            </div>
+
+            {/* Blocks List */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-2.5 bg-black">
+              {filteredTemplates.map(template => (
+                <div
+                  key={template.type}
+                  onClick={() => handleAddNode(template.type)}
+                  className="p-3 rounded-lg border border-neutral-800 active:border-white bg-neutral-950 active:bg-neutral-900 transition-all cursor-pointer flex flex-col gap-1 shadow-sm"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-white">
+                      {template.title}
+                    </span>
+                    <Plus className="w-4 h-4 text-white" />
+                  </div>
+                  <p className="text-[11px] text-neutral-400 line-clamp-2 leading-relaxed">
+                    {template.description}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

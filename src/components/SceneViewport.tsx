@@ -629,6 +629,108 @@ export const SceneViewport: React.FC<SceneViewportProps> = ({
     setScaleHandle(null);
   };
 
+  // Touch Handlers for Mobile (1-finger pan/move, 2-finger pinch-to-zoom)
+  const touchStartDistRef = useRef<number | null>(null);
+  const touchStartZoomRef = useRef<number>(1);
+
+  const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      const { x: wX, y: wY } = screenToWorld(touch.clientX, touch.clientY);
+
+      // Hit-test objects
+      let hitObj: GameObject | null = null;
+      for (let i = objects.length - 1; i >= 0; i--) {
+        const obj = objects[i];
+        if (!obj.visible || obj.locked) continue;
+        const cx = obj.x + obj.width / 2;
+        const cy = obj.y + obj.height / 2;
+        const rad = (-(obj.rotation || 0) * Math.PI) / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        const lx = cos * (wX - cx) - sin * (wY - cy);
+        const ly = sin * (wX - cx) + cos * (wY - cy);
+        if (lx >= -obj.width / 2 && lx <= obj.width / 2 && ly >= -obj.height / 2 && ly <= obj.height / 2) {
+          hitObj = obj;
+          break;
+        }
+      }
+
+      if (hitObj) {
+        onSelectObject(hitObj.id);
+        setIsInteracting(true);
+        setInteractionType(activeTool);
+        setDragStartPos({ x: wX, y: wY });
+        setInitialTransform({
+          x: hitObj.x,
+          y: hitObj.y,
+          width: hitObj.width,
+          height: hitObj.height,
+          rotation: hitObj.rotation || 0
+        });
+      } else {
+        // Touch on empty background -> 1-finger pan!
+        setIsPanning(true);
+        setPanStart({ x: touch.clientX - panOffset.x, y: touch.clientY - panOffset.y });
+      }
+    } else if (e.touches.length === 2) {
+      // 2-finger Pinch to Zoom & Pan
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      const midX = (t1.clientX + t2.clientX) / 2;
+      const midY = (t1.clientY + t2.clientY) / 2;
+
+      touchStartDistRef.current = dist;
+      touchStartZoomRef.current = zoom;
+      setIsPanning(true);
+      setPanStart({ x: midX - panOffset.x, y: midY - panOffset.y });
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      if (isPanning) {
+        setPanOffset({
+          x: touch.clientX - panStart.x,
+          y: touch.clientY - panStart.y
+        });
+      } else if (isInteracting && selectedObjectId) {
+        const { x: wX, y: wY } = screenToWorld(touch.clientX, touch.clientY);
+        const selected = objects.find(o => o.id === selectedObjectId);
+        if (selected) {
+          const dx = wX - dragStartPos.x;
+          const dy = wY - dragStartPos.y;
+          onUpdateObject({
+            ...selected,
+            x: Math.round(initialTransform.x + dx),
+            y: Math.round(initialTransform.y + dy)
+          });
+        }
+      }
+    } else if (e.touches.length === 2 && touchStartDistRef.current) {
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      const midX = (t1.clientX + t2.clientX) / 2;
+      const midY = (t1.clientY + t2.clientY) / 2;
+
+      const scale = dist / touchStartDistRef.current;
+      setZoom(Math.min(6, Math.max(0.15, parseFloat((touchStartZoomRef.current * scale).toFixed(2)))));
+      setPanOffset({
+        x: midX - panStart.x,
+        y: midY - panStart.y
+      });
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsPanning(false);
+    setIsInteracting(false);
+    touchStartDistRef.current = null;
+  };
+
   const resetView = () => {
     setZoom(1);
     setPanOffset({ x: 0, y: 0 });
@@ -717,7 +819,7 @@ export const SceneViewport: React.FC<SceneViewportProps> = ({
 
       {/* Infinite World Canvas (100% of container) */}
       <div 
-        className="flex-1 w-full h-full relative cursor-crosshair overflow-hidden"
+        className="flex-1 w-full h-full relative cursor-crosshair overflow-hidden touch-none"
         onMouseUp={handleMouseUp}
       >
         <canvas
@@ -725,8 +827,12 @@ export const SceneViewport: React.FC<SceneViewportProps> = ({
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onTouchCancel={handleTouchEnd}
           tabIndex={0}
-          className={`w-full h-full block outline-none ${
+          className={`w-full h-full block outline-none touch-none ${
             isPanning ? 'cursor-grabbing' : 'cursor-default'
           }`}
         />
